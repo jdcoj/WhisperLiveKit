@@ -39,8 +39,7 @@ RUN apt-get update && \
 RUN python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'cuDNN version: {torch.backends.cudnn.version()}'); print(f'CUDA device count: {torch.cuda.device_count()}')" || echo "CUDA verification failed but continuing..."
 
 # 安裝 diart
-RUN pip install diart
-RUN pip install mosestokenizer
+RUN pip install diart mosestokenizer
 
 COPY . .
 
