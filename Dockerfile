@@ -1,7 +1,10 @@
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+FROM pytorch/pytorch:2.7.1-cuda12.6-cudnn9-devel
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+ENV CUDA_HOME=/usr/local/cuda
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/nvidia/lib64:$LD_LIBRARY_PATH
+ENV PATH=/usr/local/cuda/bin:$PATH
 
 WORKDIR /app
 
@@ -9,28 +12,39 @@ ARG EXTRAS
 ARG HF_PRECACHE_DIR
 ARG HF_TKN_FILE
 
-# Install system dependencies
-#RUN apt-get update && \
-#    apt-get install -y ffmpeg git && \
-#    apt-get clean && \
-#    rm -rf /var/lib/apt/lists/*
-
-# 2) Install system dependencies + Python + pip
+# Install system dependencies and fix cuDNN
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        python3 \
-        python3-pip \
         ffmpeg \
-        git && \
-    rm -rf /var/lib/apt/lists/*
+        git \
+        portaudio19-dev \
+        libsndfile1 \
+        libsndfile1-dev \
+        wget \
+        gnupg \
+        pciutils && \
+    # 安裝正確的 cuDNN 庫
+    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    apt-get install -y libcudnn9-cuda-12 libcudnn9-dev-cuda-12 && \
+    # 創建符號連結確保庫文件可以被找到
+    ln -sf /usr/lib/x86_64-linux-gnu/libcudnn*.so.9 /usr/local/cuda/lib64/ || true && \
+    ldconfig && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -f cuda-keyring_1.1-1_all.deb
 
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# 驗證 CUDA 和 cuDNN 安裝
+RUN python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}'); print(f'cuDNN version: {torch.backends.cudnn.version()}'); print(f'CUDA device count: {torch.cuda.device_count()}')" || echo "CUDA verification failed but continuing..."
+
+# 安裝 diart
+RUN pip install diart
+RUN pip install mosestokenizer
 
 COPY . .
 
 # Install WhisperLiveKit directly, allowing for optional dependencies
-#   Note: For gates modedls, need to add your HF toke. See README.md
-#         for more details.
 RUN if [ -n "$EXTRAS" ]; then \
       echo "Installing with extras: [$EXTRAS]"; \
       pip install --no-cache-dir .[$EXTRAS]; \
@@ -39,20 +53,8 @@ RUN if [ -n "$EXTRAS" ]; then \
       pip install --no-cache-dir .; \
     fi
 
-# Enable in-container caching for Hugging Face models by: 
-# Note: If running multiple containers, better to map a shared
-# bucket. 
-#
-# A) Make the cache directory persistent via an anonymous volume.
-#    Note: This only persists for a single, named container. This is 
-#          only for convenience at de/test stage. 
-#          For prod, it is better to use a named volume via host mount/k8s.
+# Enable in-container caching for Hugging Face models
 VOLUME ["/root/.cache/huggingface/hub"]
-
-# or
-# B) Conditionally copy a local pre-cache from the build context to the 
-#    container's cache via the HF_PRECACHE_DIR build-arg.
-#    WARNING: This will copy ALL files in the pre-cache location.
 
 # Conditionally copy a cache directory if provided
 RUN if [ -n "$HF_PRECACHE_DIR" ]; then \
@@ -64,7 +66,6 @@ RUN if [ -n "$HF_PRECACHE_DIR" ]; then \
     fi
 
 # Conditionally copy a Hugging Face token if provided
-
 RUN if [ -n "$HF_TKN_FILE" ]; then \
       echo "Copying Hugging Face token from $HF_TKN_FILE"; \
       mkdir -p /root/.cache/huggingface && \
