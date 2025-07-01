@@ -5,6 +5,7 @@ from typing import List, Tuple, Optional
 from whisperlivekit.timed_objects import ASRToken, Sentence, Transcript
 
 logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG)
 
 # simulStreaming imports - we check if the files are here
 try:
@@ -481,6 +482,28 @@ class VACOnlineASRProcessor:
                 self.buffer_offset += max(0, len(self.audio_buffer) - self.SAMPLING_RATE)
                 self.audio_buffer = self.audio_buffer[-self.SAMPLING_RATE:]
 
+    def _force_sentence_boundary(self):
+        """
+        強制在語音結束時創建句子邊界
+        """
+        if self.online.transcript_buffer.buffer:
+            # 在最後一個 token 後面加上句號，強制分段
+            last_token = self.online.transcript_buffer.buffer[-1]
+            
+            # 創建一個 dummy 句號 token
+            dummy_token = ASRToken(
+                start=last_token.end,
+                end=last_token.end + 0.1,
+                text="\n",  # 中文句號
+                probability=0.9
+            )
+            
+            # 直接加到 committed 中，強制分段
+            self.online.transcript_buffer.buffer.append(dummy_token)
+            self.online.committed.extend(self.online.transcript_buffer.buffer)
+            
+            logger.debug("Force sentence boundary with dummy token")
+
     def process_iter(self) -> Tuple[List[ASRToken], float]:
         """
         Depending on the VAD status and the amount of accumulated audio,
@@ -504,6 +527,7 @@ class VACOnlineASRProcessor:
         result_tokens, processed_upto = self.online.finish()
         self.current_online_chunk_buffer_size = 0
         self.is_currently_final = False
+        self._force_sentence_boundary()
         return result_tokens, processed_upto
     
     def get_buffer(self):
