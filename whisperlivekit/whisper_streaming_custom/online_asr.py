@@ -510,7 +510,7 @@ class VACOnlineASRProcessor:
             dummy_token = ASRToken(
                 start=last_token.end,
                 end=last_token.end + 0.1,
-                text="\n",  # 中文句號
+                text="<br><br>",  # 分段
                 probability=0.9
             )
             

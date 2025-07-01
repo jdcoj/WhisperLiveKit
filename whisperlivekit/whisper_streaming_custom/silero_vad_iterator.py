@@ -17,8 +17,8 @@ class VADIterator:
         model,
         threshold: float = 0.7,
         sampling_rate: int = 16000,
-        min_silence_duration_ms: int = 500,  # makes sense on one recording that I checked
-        speech_pad_ms: int = 100,  # same
+        min_silence_duration_ms: int = 100,  # makes sense on one recording that I checked
+        speech_pad_ms: int = 50,  # same
     ):
         """
         Class for stream imitation
