@@ -1,4 +1,8 @@
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
+# logger.setLevel("DEBUG")  # Set logger to debug level for detailed output
 
 # This is copied from silero-vad's vad_utils.py:
 # https://github.com/snakers4/silero-vad/blob/f6b1294cb27590fb2452899df98fb234dfef1134/utils_vad.py#L340
@@ -11,7 +15,7 @@ class VADIterator:
     def __init__(
         self,
         model,
-        threshold: float = 0.5,
+        threshold: float = 0.7,
         sampling_rate: int = 16000,
         min_silence_duration_ms: int = 500,  # makes sense on one recording that I checked
         speech_pad_ms: int = 100,  # same
@@ -57,7 +61,7 @@ class VADIterator:
         self.temp_end = 0
         self.current_sample = 0
 
-    def __call__(self, x, return_seconds=False):
+    def __call__(self, x, return_seconds=True):
         """
         x: torch.Tensor
             audio chunk (see examples in repo)
@@ -76,11 +80,13 @@ class VADIterator:
         self.current_sample += window_size_samples
 
         speech_prob = self.model(x, self.sampling_rate).item()
+        logger.debug(f"Current sample: {self.current_sample}, Speech probability: {speech_prob}")
 
         if (speech_prob >= self.threshold) and self.temp_end:
             self.temp_end = 0
 
         if (speech_prob >= self.threshold) and not self.triggered:
+            logger.debug("Trigger")
             self.triggered = True
             speech_start = self.current_sample - self.speech_pad_samples
             return {
@@ -91,7 +97,7 @@ class VADIterator:
                 )
             }
 
-        if (speech_prob < self.threshold - 0.15) and self.triggered:
+        if (speech_prob < self.threshold) and self.triggered:
             if not self.temp_end:
                 self.temp_end = self.current_sample
             if self.current_sample - self.temp_end < self.min_silence_samples:
@@ -100,6 +106,7 @@ class VADIterator:
                 speech_end = self.temp_end + self.speech_pad_samples
                 self.temp_end = 0
                 self.triggered = False
+                logger.debug("End")
                 return {
                     "end": (
                         int(speech_end)

@@ -90,7 +90,7 @@ class AudioProcessor:
             return (ffmpeg.input("pipe:0", format="webm")
                     .output("pipe:1", format="s16le", acodec="pcm_s16le", 
                             ac=self.channels, ar=str(self.sample_rate))
-                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=True))
+                    .run_async(pipe_stdin=True, pipe_stdout=True, pipe_stderr=False))
         except FileNotFoundError:
             error = """
             FFmpeg is not installed or not found in your system's PATH.
