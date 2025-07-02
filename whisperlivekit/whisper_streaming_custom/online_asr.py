@@ -511,6 +511,7 @@ class VACOnlineASRProcessor:
                 start=last_token.end,
                 end=last_token.end + 0.1,
                 text="<br><br>",  # 分段
+                speaker=last_token.speaker,
                 probability=0.9
             )
             

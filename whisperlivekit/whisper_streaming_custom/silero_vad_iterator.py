@@ -15,10 +15,10 @@ class VADIterator:
     def __init__(
         self,
         model,
-        threshold: float = 0.7,
+        threshold: float = 0.6,
         sampling_rate: int = 16000,
         min_silence_duration_ms: int = 100,  # makes sense on one recording that I checked
-        speech_pad_ms: int = 50,  # same
+        speech_pad_ms: int = 100,  # same
     ):
         """
         Class for stream imitation
@@ -80,7 +80,7 @@ class VADIterator:
         self.current_sample += window_size_samples
 
         speech_prob = self.model(x, self.sampling_rate).item()
-        logger.debug(f"Current sample: {self.current_sample}, Speech probability: {speech_prob}")
+        logger.debug(f"Current sample: {self.current_sample}, Speech probability: {speech_prob:.2f}")
 
         if (speech_prob >= self.threshold) and self.temp_end:
             self.temp_end = 0
@@ -97,7 +97,7 @@ class VADIterator:
                 )
             }
 
-        if (speech_prob < self.threshold) and self.triggered:
+        if (speech_prob < self.threshold - 0.15) and self.triggered:
             if not self.temp_end:
                 self.temp_end = self.current_sample
             if self.current_sample - self.temp_end < self.min_silence_samples:
