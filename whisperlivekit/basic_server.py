@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from whisperlivekit import TranscriptionEngine, AudioProcessor, get_web_interface_html, parse_args
 import asyncio
 import logging
+import uuid
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -62,9 +63,14 @@ async def websocket_endpoint(websocket: WebSocket):
     results_generator = await audio_processor.create_tasks()
     websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator))
 
+    audio_filename = f"./received_audio/audio_session_{uuid.uuid4().hex}.webm"
+    audio_file = open(audio_filename, "ab")
+
     try:
         while True:
             message = await websocket.receive_bytes()
+            audio_file.write(message)
+            audio_file.flush()
             await audio_processor.process_audio(message)
     except KeyError as e:
         if 'bytes' in str(e):
@@ -86,6 +92,7 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"Exception while awaiting websocket_task completion: {e}")
             
+        audio_file.close()
         await audio_processor.cleanup()
         logger.info("WebSocket endpoint cleaned up successfully.")
 

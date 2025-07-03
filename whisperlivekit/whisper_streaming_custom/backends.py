@@ -142,7 +142,7 @@ class FasterWhisperASR(ASRBase):
             initial_prompt=init_prompt,
             beam_size=5,
             word_timestamps=True,
-            condition_on_previous_text=True,
+            condition_on_previous_text=False,
             **self.transcribe_kargs,
         )
         return list(segments)
