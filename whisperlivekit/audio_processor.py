@@ -439,6 +439,14 @@ class AudioProcessor:
                             "diff": round(token.end - last_end_diarized, 2)
                         })
                         previous_speaker = speaker
+                    elif "<br><br>" in lines[-1]["text"]:
+                        lines.append({
+                            "speaker": speaker,
+                            "text": token.text,
+                            "beg": format_time(token.start),
+                            "end": format_time(token.end),
+                            "diff": round(token.end - last_end_diarized, 2)
+                        })
                     elif token.text:  # Only append if text isn't empty
                         lines[-1]["text"] += sep + token.text
                         lines[-1]["end"] = format_time(token.end)

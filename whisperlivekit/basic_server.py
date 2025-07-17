@@ -39,8 +39,11 @@ async def get():
 
 async def handle_websocket_results(websocket, results_generator):
     """Consumes results from the audio processor and sends them via WebSocket."""
+    lastest_response = None
+
     try:
         async for response in results_generator:
+            lastest_response = response
             await websocket.send_json(response)
         # when the results_generator finishes it means all audio has been processed
         logger.info("Results generator finished. Sending 'ready_to_stop' to client.")
@@ -50,6 +53,41 @@ async def handle_websocket_results(websocket, results_generator):
     except Exception as e:
         logger.warning(f"Error in WebSocket results handler: {e}")
 
+    return lastest_response
+
+async def convert_to_rttm(audio_filename, final_response):
+    """
+    Convert the transcription response to RTTM format and save to a file.
+    """
+
+    if not final_response or "lines" not in final_response:
+        logger.warning("No transcription lines found for RTTM conversion.")
+        return
+
+    rttm_lines = []
+    for idx, line in enumerate(final_response["lines"]):
+        speaker = line.get("speaker", -1)
+        beg = line.get("beg", "0:00:00")
+        end = line.get("end", "0:00:00")
+        # Convert beg and end to seconds
+        def time_to_seconds(t):
+            parts = t.split(":")
+            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+        start_time = time_to_seconds(beg)
+        end_time = time_to_seconds(end)
+        duration = end_time - start_time
+        # RTTM format: SPEAKER <file-id> 1 <start-time> <duration> <ortho> <stype> <name> <conf> <slat>
+        # We'll use audio_filename (without extension) as file-id
+        file_id = audio_filename.split("/")[-1].split(".")[0]
+        speaker_id = 1 if speaker == -1 else speaker
+        rttm_line = f"SPEAKER {file_id} 1 {start_time:.2f} {duration:.2f} <NA> <NA> speaker{speaker_id} <NA> <NA>"
+        rttm_lines.append(rttm_line)
+
+    rttm_filename = f"./rttm/{file_id}.rttm"
+    with open(rttm_filename, "w", encoding="utf-8") as f:
+        for line in rttm_lines:
+            f.write(line + "\n")
+    logger.info(f"RTTM file written to {rttm_filename}")
 
 @app.websocket("/asr")
 async def websocket_endpoint(websocket: WebSocket):
@@ -65,6 +103,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     audio_filename = f"./received_audio/audio_session_{uuid.uuid4().hex}.webm"
     audio_file = open(audio_filename, "ab")
+    final_response = None
 
     try:
         while True:
@@ -86,7 +125,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if not websocket_task.done():
             websocket_task.cancel()
         try:
-            await websocket_task
+            final_response = await websocket_task
         except asyncio.CancelledError:
             logger.info("WebSocket results handler task was cancelled.")
         except Exception as e:
@@ -94,6 +133,9 @@ async def websocket_endpoint(websocket: WebSocket):
             
         audio_file.close()
         await audio_processor.cleanup()
+
+        await convert_to_rttm(audio_filename, final_response)
+
         logger.info("WebSocket endpoint cleaned up successfully.")
 
 def main():
