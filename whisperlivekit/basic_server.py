@@ -6,6 +6,8 @@ from whisperlivekit import TranscriptionEngine, AudioProcessor, get_web_interfac
 import asyncio
 import logging
 import uuid
+from pydub import AudioSegment
+import httpx
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -37,7 +39,7 @@ async def get():
     return HTMLResponse(get_web_interface_html())
 
 
-async def handle_websocket_results(websocket, results_generator):
+async def handle_websocket_results(websocket, results_generator, audio_file, audio_filename):
     """Consumes results from the audio processor and sends them via WebSocket."""
     lastest_response = None
 
@@ -45,6 +47,24 @@ async def handle_websocket_results(websocket, results_generator):
         async for response in results_generator:
             lastest_response = response
             await websocket.send_json(response)
+
+        audio_file.close()
+        logger.info("Audio file closed.")
+
+        mp3_filename = audio_filename.replace(".webm", ".mp3")
+        await convert_webm_to_mp3(audio_filename, mp3_filename)
+        logger.info(f"Converted to MP3: {mp3_filename}")
+
+        # endpoint_url = "https://ais.skiesoft.com/v1/audio/diarization" 
+        # processing_result = await send_audio_and_get_response(mp3_filename, endpoint_url)
+        # logger.info("Received processing result from external endpoint")
+        
+        try:
+            # await websocket.send_json({"type": "diarization_result", "data": processing_result})
+            await websocket.send_json({"type": "test"})
+        except Exception as e:
+            logger.warning(f"Failed to send processing result via WebSocket: {e}")
+        
         # when the results_generator finishes it means all audio has been processed
         logger.info("Results generator finished. Sending 'ready_to_stop' to client.")
         await websocket.send_json({"type": "ready_to_stop"})
@@ -89,6 +109,30 @@ async def convert_to_rttm(audio_filename, final_response):
             f.write(line + "\n")
     logger.info(f"RTTM file written to {rttm_filename}")
 
+
+async def convert_webm_to_mp3(webm_path: str, mp3_path: str) -> None:
+    """
+    將 webm 格式音檔轉換為 mp3。
+    :param webm_path: webm 檔案路徑
+    :param mp3_path: mp3 輸出路徑
+    """
+    audio = AudioSegment.from_file(webm_path, format="webm")
+    audio.export(mp3_path, format="mp3")
+
+async def send_audio_and_get_response(mp3_path: str, endpoint_url: str) -> dict:
+    """
+    將 mp3 音檔傳送到指定 endpoint，並等待回傳結果。
+    :param mp3_path: mp3 檔案路徑
+    :param endpoint_url: API endpoint URL
+    :return: 回傳的 JSON 結果
+    """
+    async with httpx.AsyncClient() as client:
+        with open(mp3_path, "rb") as audio_file:
+            files = {"data": (mp3_path.split("/")[-1], audio_file, "audio/mp3")}
+            response = await client.post(endpoint_url, files=files)
+            response.raise_for_status()
+            return response.json()
+
 @app.websocket("/asr")
 async def websocket_endpoint(websocket: WebSocket):
     global transcription_engine
@@ -99,10 +143,11 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info("WebSocket connection opened.")
             
     results_generator = await audio_processor.create_tasks()
-    websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator))
 
     audio_filename = f"./received_audio/audio_session_{uuid.uuid4().hex}.webm"
     audio_file = open(audio_filename, "ab")
+    websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator, audio_file, audio_filename))
+
     final_response = None
 
     try:
@@ -131,11 +176,13 @@ async def websocket_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.warning(f"Exception while awaiting websocket_task completion: {e}")
             
-        audio_file.close()
+        if not audio_file.closed:
+            audio_file.close()
+
         await audio_processor.cleanup()
 
         await convert_to_rttm(audio_filename, final_response)
-
+    
         logger.info("WebSocket endpoint cleaned up successfully.")
 
 def main():
