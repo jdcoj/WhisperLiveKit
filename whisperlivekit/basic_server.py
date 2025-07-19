@@ -8,6 +8,7 @@ import logging
 import uuid
 from pydub import AudioSegment
 import httpx
+import os
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -61,7 +62,6 @@ async def handle_websocket_results(websocket, results_generator, audio_file, aud
         
         try:
             # await websocket.send_json({"type": "diarization_result", "data": processing_result})
-            await websocket.send_json({"type": "test"})
         except Exception as e:
             logger.warning(f"Failed to send processing result via WebSocket: {e}")
         
@@ -103,6 +103,8 @@ async def convert_to_rttm(audio_filename, final_response):
         rttm_line = f"SPEAKER {file_id} 1 {start_time:.2f} {duration:.2f} <NA> <NA> speaker{speaker_id} <NA> <NA>"
         rttm_lines.append(rttm_line)
 
+    rttm_folder = "./rttm"
+    os.makedirs(rttm_folder, exist_ok=True)
     rttm_filename = f"./rttm/{file_id}.rttm"
     with open(rttm_filename, "w", encoding="utf-8") as f:
         for line in rttm_lines:
@@ -144,6 +146,8 @@ async def websocket_endpoint(websocket: WebSocket):
             
     results_generator = await audio_processor.create_tasks()
 
+    audio_folder = "./received_audio"
+    os.makedirs(audio_folder, exist_ok=True)
     audio_filename = f"./received_audio/audio_session_{uuid.uuid4().hex}.webm"
     audio_file = open(audio_filename, "ab")
     websocket_task = asyncio.create_task(handle_websocket_results(websocket, results_generator, audio_file, audio_filename))
