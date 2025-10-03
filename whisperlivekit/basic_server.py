@@ -9,6 +9,8 @@ import uuid
 from pydub import AudioSegment
 import httpx
 import os
+import subprocess
+import json
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logging.getLogger().setLevel(logging.WARNING)
@@ -62,6 +64,7 @@ async def handle_websocket_results(websocket, results_generator, audio_file, aud
         
         try:
             # await websocket.send_json({"type": "diarization_result", "data": processing_result})
+            await websocket.send_json({"type": "test"})
         except Exception as e:
             logger.warning(f"Failed to send processing result via WebSocket: {e}")
         
@@ -74,43 +77,6 @@ async def handle_websocket_results(websocket, results_generator, audio_file, aud
         logger.warning(f"Error in WebSocket results handler: {e}")
 
     return lastest_response
-
-async def convert_to_rttm(audio_filename, final_response):
-    """
-    Convert the transcription response to RTTM format and save to a file.
-    """
-
-    if not final_response or "lines" not in final_response:
-        logger.warning("No transcription lines found for RTTM conversion.")
-        return
-
-    rttm_lines = []
-    for idx, line in enumerate(final_response["lines"]):
-        speaker = line.get("speaker", -1)
-        beg = line.get("beg", "0:00:00")
-        end = line.get("end", "0:00:00")
-        # Convert beg and end to seconds
-        def time_to_seconds(t):
-            parts = t.split(":")
-            return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
-        start_time = time_to_seconds(beg)
-        end_time = time_to_seconds(end)
-        duration = end_time - start_time
-        # RTTM format: SPEAKER <file-id> 1 <start-time> <duration> <ortho> <stype> <name> <conf> <slat>
-        # We'll use audio_filename (without extension) as file-id
-        file_id = audio_filename.split("/")[-1].split(".")[0]
-        speaker_id = 1 if speaker == -1 else speaker
-        rttm_line = f"SPEAKER {file_id} 1 {start_time:.2f} {duration:.2f} <NA> <NA> speaker{speaker_id} <NA> <NA>"
-        rttm_lines.append(rttm_line)
-
-    rttm_folder = "./rttm"
-    os.makedirs(rttm_folder, exist_ok=True)
-    rttm_filename = f"./rttm/{file_id}.rttm"
-    with open(rttm_filename, "w", encoding="utf-8") as f:
-        for line in rttm_lines:
-            f.write(line + "\n")
-    logger.info(f"RTTM file written to {rttm_filename}")
-
 
 async def convert_webm_to_mp3(webm_path: str, mp3_path: str) -> None:
     """
@@ -135,14 +101,135 @@ async def send_audio_and_get_response(mp3_path: str, endpoint_url: str) -> dict:
             response.raise_for_status()
             return response.json()
 
+async def verify_token(token: str) -> bool:
+    """
+    驗證 token 是否有效
+    :param token: 要驗證的 token
+    :return: 驗證是否成功
+    """
+    try:
+        # 驗證端點 URL - 你可以根據需要修改這個 URL
+        auth_endpoint = "https://developer.skiesoft.com/api/verify"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(auth_endpoint, headers=headers)
+            logger.info(f"Token verification response status: {response.status_code}")
+            logger.info(f"Token verification response text: {response.text}")
+            return response.status_code == 200
+    except httpx.TimeoutException:
+        logger.warning(f"Token verification timeout for token: {token[:10]}...")
+        return False
+    except httpx.RequestError as e:
+        logger.warning(f"Token verification request error: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Token verification failed: {e}")
+        return False
+
+async def log_usage(token: str, file_path: str, model: str):
+    """
+    記錄使用者的使用情況
+    :param token: 使用者的 token
+    :param file_path: 上傳的音訊檔案路徑
+    :param model: 使用的模型名稱
+    """
+    try:
+        usage_endpoint = "https://developer.skiesoft.com/api/usage/log"
+        
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                file_path
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        duration = float(json.loads(result.stdout)["format"]["duration"])
+        logger.info(f"Audio duration: {duration} seconds")
+        
+        data = {
+            "duration_s": duration,
+            "model": "thiannu-v1",
+            "usage_type": "non-realtime"        # TODO:tmporary value
+        }
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(usage_endpoint, json=data, headers=headers)
+            response.raise_for_status()
+            logger.info(f"Usage logged successfully: {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Failed to log usage: {e}")
+
 @app.websocket("/asr")
 async def websocket_endpoint(websocket: WebSocket):
     global transcription_engine
+    logger.info("New WebSocket connection attempt.")
+    # 在接受連接前先驗證 Authorization header
+    try:
+        # 從 headers 中獲取 Authorization token
+        authorization = websocket.headers.get("Authorization")
+        
+        if not authorization:
+            await websocket.close(code=4001, reason="Missing Authorization header")
+            logger.warning("WebSocket connection rejected: Missing Authorization header")
+            return
+        
+        # 檢查 Bearer token 格式
+        if not authorization.startswith("Bearer "):
+            await websocket.close(code=4001, reason="Invalid Authorization header format")
+            logger.warning("WebSocket connection rejected: Invalid Authorization header format")
+            return
+        
+        # 提取 token
+        token = authorization[7:]  # 移除 "Bearer " 前綴
+        logger.info(f"Extracted token: {token}")
+        
+        # 驗證 token
+        is_valid = await verify_token(token)
+        
+        if not is_valid:
+            await websocket.close(code=4001, reason="Invalid token")
+            logger.info("WebSocket connection rejected: Invalid token")
+            return
+        
+        logger.info("WebSocket authentication successful.")
+        
+    except Exception as e:
+        logger.error(f"Authentication error: {e}")
+        await websocket.close(code=4000, reason="Authentication error")
+        return
+    
+    # 驗證成功後接受連接
+    await websocket.accept()
+    logger.info("WebSocket connection accepted after successful authentication.")
+    
+    # 發送認證成功訊息
+    await websocket.send_json({
+        "type": "auth_success", 
+        "message": "Authentication successful"
+    })
+    
+    # 認證成功後，繼續原本的流程
     audio_processor = AudioProcessor(
         transcription_engine=transcription_engine,
     )
-    await websocket.accept()
-    logger.info("WebSocket connection opened.")
+    logger.info("Starting audio processing...")
             
     results_generator = await audio_processor.create_tasks()
 
@@ -183,9 +270,12 @@ async def websocket_endpoint(websocket: WebSocket):
         if not audio_file.closed:
             audio_file.close()
 
-        await audio_processor.cleanup()
+        # Add usage log
+        await log_usage(token, audio_filename, "thiannu-v1")
 
-        await convert_to_rttm(audio_filename, final_response)
+        # TODO: Clear received audio files if needed
+
+        await audio_processor.cleanup()
     
         logger.info("WebSocket endpoint cleaned up successfully.")
 
