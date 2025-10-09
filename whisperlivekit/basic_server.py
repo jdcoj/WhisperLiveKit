@@ -221,8 +221,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     # 發送認證成功訊息
     await websocket.send_json({
-        "type": "auth_success", 
-        "message": "Authentication successful"
+        "type": "auth_success"
     })
     
     # 認證成功後，繼續原本的流程
