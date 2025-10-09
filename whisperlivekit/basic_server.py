@@ -166,7 +166,7 @@ async def log_usage(token: str, file_path: str, model: str):
         data = {
             "duration_s": duration,
             "model": "thiannu-v1",
-            "usage_type": "non-realtime"        # TODO:tmporary value
+            "usage_type": "realtime"
         }
         
         async with httpx.AsyncClient(timeout=10) as client:
